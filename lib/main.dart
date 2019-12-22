@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
 import 'package:dart_winapi/user32.dart';
+import 'package:flutter/services.dart';
+
+import 'keys.dart';
 
 void main() {
   // See https://github.com/flutter/flutter/wiki/Desktop-shells#target-platform-override
@@ -18,20 +21,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Flutter AutoClicker',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
         primarySwatch: Colors.blue,
       ),
-      home: MyHomePage(title: 'Flutter Demo Home Page'),
+      home: MyHomePage(title: 'Flutter AutoClicker'),
     );
   }
 }
@@ -49,6 +43,8 @@ class _MyHomePageState extends State<MyHomePage> {
   var _leftClick = true;
   var _start = false;
   var _cps = 100;
+  var _key = 'ALT';
+  var _clickCount = 0;
   Timer _timer;
   Timer _timer2;
 
@@ -62,24 +58,81 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            if (_start) Text('Press ALT to toggle'),
+            Text('Press ${_key ?? 'INVALID'} to toggle'),
             Container(
               alignment: Alignment.center,
               width: 400,
               padding: const EdgeInsets.all(8.0),
-              child: TextField(
+              child: TextFormField(
+                inputFormatters: <TextInputFormatter>[
+                  WhitelistingTextInputFormatter.digitsOnly
+                ],
+                readOnly: _start,
+                initialValue: '100',
                 onChanged: (string) {
-                  if (string.trim().isEmpty) {
+                  var n = int.tryParse(string.trim());
+                  if (n == null || 0 >= n) {
+                    _cps = null;
                     return;
                   }
-                  _cps = int.tryParse(string.trim());
+                  _cps = n;
                 },
                 decoration: InputDecoration(labelText: 'Click speed in ms'),
+              ),
+            ),
+            Container(
+              alignment: Alignment.center,
+              width: 400,
+              padding: const EdgeInsets.all(8.0),
+              child: TextFormField(
+                inputFormatters: <TextInputFormatter>[
+                  WhitelistingTextInputFormatter.digitsOnly
+                ],
+                readOnly: _start,
+                initialValue: '0',
+                onChanged: (string) {
+                  var n = int.tryParse(string.trim());
+                  if (n == null || 0 >= n) {
+                    _clickCount = null;
+                    return;
+                  }
+                  _clickCount = n;
+                },
+                decoration: InputDecoration(
+                    labelText: 'Click count (0 = until stopped)'),
+              ),
+            ),
+            Container(
+              alignment: Alignment.center,
+              width: 400,
+              padding: const EdgeInsets.all(8.0),
+              child: TextFormField(
+                maxLength: 5,
+                readOnly: _start,
+                initialValue: 'ALT',
+                onChanged: (string) {
+                  var valid = keys[string.toUpperCase()] != null;
+                  print('Changed: $valid');
+                  if (valid) {
+                    setState(() {
+                      _key = string.toUpperCase();
+                    });
+                  } else {
+                    setState(() {
+                      _key = null;
+                      _start = false;
+                    });
+                  }
+                },
+                decoration: InputDecoration(labelText: 'Toggle Key'),
               ),
             ),
             RaisedButton(
               child: _leftClick ? Text('Left Click') : Text('Right Click'),
               onPressed: () {
+                if (_start) {
+                  return;
+                }
                 setState(() {
                   _leftClick = !_leftClick;
                 });
@@ -88,6 +141,10 @@ class _MyHomePageState extends State<MyHomePage> {
             RaisedButton(
               child: _start ? Text('Started') : Text('Stopped'),
               onPressed: () async {
+                if (_cps == null || _key == null) {
+                  return;
+                }
+                print('Cps: $_cps');
                 setState(() {
                   _start = !_start;
                 });
@@ -97,8 +154,19 @@ class _MyHomePageState extends State<MyHomePage> {
                     if (!_start) {
                       return false;
                     }
-                    await keyPress(0x12);
-                    _timer2 = Timer.periodic(Duration(milliseconds: _cps), (_) {
+                    var key = keys[_key];
+                    if (key == null) {
+                      // Avoid too many calls.
+                      await Future.delayed(Duration(milliseconds: 100));
+                      return true;
+                    }
+                    await keyPress(key);
+                    var count = 0;
+                    _timer2 =
+                        Timer.periodic(Duration(milliseconds: _cps), (timer) {
+                      if (_clickCount != 0) {
+                        count++;
+                      }
                       if (_leftClick) {
                         MouseEvent(dwFlags: MOUSEEVENTF_LEFTDOWN);
                         MouseEvent(dwFlags: MOUSEEVENTF_LEFTUP);
@@ -106,11 +174,18 @@ class _MyHomePageState extends State<MyHomePage> {
                         MouseEvent(dwFlags: MOUSEEVENTF_RIGHTDOWN);
                         MouseEvent(dwFlags: MOUSEEVENTF_RIGHTUP);
                       }
+                      if (_clickCount != 0 && count == _clickCount) {
+                        _timer.cancel();
+                        timer.cancel();
+                        setState(() {
+                          _start = false;
+                        });
+                      }
                     });
                     if (!_start) {
                       return false;
                     }
-                    await keyPress(0x12);
+                    await keyPress(key);
                     _timer2?.cancel();
                     return true;
                   });
